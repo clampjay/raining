@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Immersive Rain & Floating Text Environment</title>
+    <!-- 引入思源黑体 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@100..900&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --primary: rgba(255, 255, 255, 0.9);
+            --bg-panel: rgba(18, 18, 22, 0.5);
+            --border-color: rgba(255, 255, 255, 0.1);
+            --accent: #6ee7b7;
+            --text-color: #ffffff; 
+        }
+
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background-color: #000;
+            font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            touch-action: none;
+        }
+
+        canvas {
+            display: block; width: 100vw; height: 100vh;
+            cursor: crosshair;
+        }
+
+        /* 隐形悬浮文本窗口 */
+        #text-window {
+            position: absolute;
+            top: 25%; left: calc(50% - 150px);
+            width: 300px; min-width: 150px;
+            height: 180px; min-height: 80px;
+            background: transparent;
+            backdrop-filter: none; -webkit-backdrop-filter: none;
+            border: none; border-radius: 12px;
+            display: flex; flex-direction: column;
+            resize: both; overflow: hidden; z-index: 50;
+            transition: opacity 0.4s ease, transform 0.4s ease, background 0.4s ease, backdrop-filter 0.4s ease, -webkit-backdrop-filter 0.4s ease;
+        }
+
+        #text-window.hidden {
+            opacity: 0; transform: scale(0.95); pointer-events: none;
+        }
+
+        #text-window:focus-within, #text-window:hover {
+            background: rgba(0, 0, 0, 0.25);
+            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+        }
+
+        /* 完全隐藏原生缩放方块，但保留拖拽调整大小的功能 */
+        #text-window::-webkit-resizer { background: transparent; }
+
+        /* 标题栏常亮 */
+        .title-bar {
+            width: 100%; height: 36px; display: flex; align-items: center; justify-content: center;
+            position: relative; cursor: grab; background: transparent; 
+            user-select: none; opacity: 1; transition: opacity 0.4s ease;
+        }
+        
+        .title-bar:active { cursor: grabbing; }
+        
+        /* 拖拽句柄平时隐藏，hover时显露 */
+        .title-bar .drag-icon { 
+            position: absolute; left: 16px; font-size: 16px; pointer-events: none; 
+            color: rgba(255,255,255,0); transition: color 0.4s ease;
+        }
+        #text-window:focus-within .title-bar .drag-icon, #text-window:hover .title-bar .drag-icon {
+            color: rgba(255,255,255,0.4);
+        }
+
+        /* 标题文字常驻，移开时变淡，融合环境 */
+        .title-text {
+            background: transparent; border: none; color: var(--text-color); opacity: 0.4;
+            font-size: 12px; font-weight: 500; letter-spacing: 2px; text-align: center;
+            outline: none; width: 60%; font-family: inherit; transition: color 0.2s, opacity 0.4s ease;
+        }
+        #text-window:focus-within .title-text, #text-window:hover .title-text { opacity: 0.8; }
+        .title-text:focus { opacity: 1 !important; border-bottom: 1px solid rgba(255, 255, 255, 0.2); }
+        .title-text::placeholder { color: rgba(255, 255, 255, 0.3); }
+
+        #overlay-text {
+            flex-grow: 1; width: 100%; background: transparent; border: none; color: var(--text-color);
+            font-family: inherit; padding: 12px 16px; resize: none; outline: none; box-sizing: border-box;
+            line-height: 1.5; font-size: 15px; font-weight: 300; text-align: left; transition: text-align 0.3s ease, color 0.3s ease;
+        }
+        #overlay-text::placeholder { color: rgba(255, 255, 255, 0.3); }
+
+        /* 侧边栏图标 */
+        #quick-tools {
+            position: fixed; right: 24px; top: 50%; transform: translateY(-50%);
+            display: flex; flex-direction: column; gap: 10px; z-index: 100;
+        }
+
+        .quick-btn {
+            width: 30px; height: 30px; border-radius: 50%;
+            background: rgba(18, 18, 22, 0.3); 
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.85);
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+        .quick-btn:hover { 
+            transform: scale(1.1); background: rgba(30, 30, 35, 0.6); border-color: rgba(255, 255, 255, 0.15);
+        }
+        .quick-btn.off { color: rgba(255, 255, 255, 0.25); } 
+        .quick-btn.active { color: var(--accent); border-color: var(--accent); }
+
+        /* 控制台 */
+        #control-panel {
+            position: fixed; right: 70px; top: 50%; width: 280px;
+            max-height: 80vh; overflow-y: auto; padding: 20px;
+            background: var(--bg-panel); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--border-color); border-radius: 16px; color: var(--primary);
+            z-index: 99; transform-origin: right center; transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            opacity: 0; transform: translateY(-50%) scale(0.95); pointer-events: none;
+            box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+        }
+
+        #control-panel::-webkit-scrollbar { width: 3px; }
+        #control-panel::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 3px; }
+        #control-panel.active { opacity: 1; transform: translateY(-50%) scale(1); pointer-events: auto; }
+
+        .header { margin-bottom: 20px; }
+        .header h2 { margin: 0; font-size: 15px; font-weight: 500; letter-spacing: 0.5px; }
+        .header p { margin: 4px 0 0 0; font-size: 11px; color: rgba(255, 255, 255, 0.4); }
+        
+        .control-group { margin-bottom: 16px; }
+        .control-group label { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-bottom: 6px; color: rgba(255, 255, 255, 0.7); }
+        .control-group label span:last-child { opacity: 0.6; }
+        
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 12px; width: 12px; border-radius: 50%;
+            background: var(--accent); cursor: pointer; margin-top: -5px; box-shadow: 0 0 8px rgba(110, 231, 183, 0.4);
+        }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 2px; cursor: pointer; background: rgba(255, 255, 255, 0.1); border-radius: 1px; }
+
+        input[type="color"] {
+            -webkit-appearance: none; border: none; width: 20px; height: 20px;
+            border-radius: 4px; cursor: pointer; background: transparent; padding: 0;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; }
+
+        .align-controls { display: flex; gap: 6px; margin-top: 4px; }
+        .align-btn { 
+            flex: 1; padding: 4px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); 
+            color: rgba(255,255,255,0.5); border-radius: 4px; cursor: pointer; transition: all 0.2s;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .align-btn:hover { background: rgba(255,255,255,0.08); }
+        .align-btn.active { background: rgba(255,255,255,0.15); color: #fff; border-color: var(--accent); }
+
+        .upload-btn {
+            display: block; width: 100%; padding: 10px; margin-top: 20px;
+            background: rgba(255, 255, 255, 0.03); border: 1px dashed rgba(255, 255, 255, 0.2);
+            border-radius: 8px; color: var(--primary); text-align: center;
+            font-size: 12px; cursor: pointer; transition: all 0.3s ease; box-sizing: border-box;
+        }
+        .upload-btn:hover { background: rgba(255, 255, 255, 0.08); border-color: var(--accent); color: var(--accent); }
+        input[type="file"] { display: none; }
+        .divider { height: 1px; background: rgba(255, 255, 255, 0.06); margin: 16px 0; }
+    </style>
+</head>
+<body>
+
+    <canvas id="glcanvas"></canvas>
+
+    <div id="text-window">
+        <div class="title-bar" id="text-drag-handle" title="按住边缘拖动">
+            <span class="drag-icon">∷</span>
+            <input type="text" class="title-text" id="title-input" value="TEXT OVERLAY" placeholder="输入标题...">
+        </div>
+        <textarea id="overlay-text" placeholder="雨夜，悬浮的字符..."></textarea>
+    </div>
+
+    <!-- 侧边栏极简图标 -->
+    <div id="quick-tools">
+        <div class="quick-btn" id="btn-music" onclick="toggleMusic()" title="静音/开启音乐">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+            </svg>
+        </div>
+        <div class="quick-btn" id="btn-text" onclick="toggleTextWindow()" title="显示/隐藏文本">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 7V4h16v3"></path><path d="M9 20h6"></path><path d="M12 4v16"></path>
+            </svg>
+        </div>
+        <div class="quick-btn" id="btn-settings" onclick="toggleUI()" title="调节参数">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+        </div>
+    </div>
+
+    <!-- 优化后控制面板 -->
+    <div id="control-panel">
+        <div class="header">
+            <h2>氛围物理参数</h2>
+            <p>Rain & Text Environment</p>
+        </div>
+
+        <div class="control-group">
+            <label>
+                <span>文字颜色 Text Color</span>
+                <input type="color" id="textColor" value="#ffffff">
+            </label>
+        </div>
+
+        <div class="control-group">
+            <label><span>文字排版 Text Size</span> <span id="val-textSize">15 px</span></label>
+            <input type="range" id="textSize" min="12" max="120" step="1" value="15">
+        </div>
+        <div class="control-group">
+            <label><span>字体粗细 Font Weight</span> <span id="val-fontWeight">300</span></label>
+            <input type="range" id="fontWeight" min="100" max="900" step="100" value="300">
+        </div>
+        
+        <div class="control-group">
+            <label><span>文字对齐 Text Align</span></label>
+            <div class="align-controls">
+                <button class="align-btn active" data-align="left"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="17" y1="10" x2="3" y2="10"></line><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="14" x2="3" y2="14"></line><line x1="17" y1="18" x2="3" y2="18"></line></svg></button>
+                <button class="align-btn" data-align="center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="10" x2="6" y2="10"></line><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="14" x2="3" y2="14"></line><line x1="18" y1="18" x2="6" y2="18"></line></svg></button>
+                <button class="align-btn" data-align="right"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="21" y1="10" x2="7" y2="10"></line><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="14" x2="3" y2="14"></line><line x1="21" y1="18" x2="7" y2="18"></line></svg></button>
+            </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="control-group">
+            <label><span>雨势 Intensity</span> <span id="val-rain">1.0</span></label>
+            <input type="range" id="rainAmount" min="0.0" max="3.0" step="0.1" value="1.0">
+        </div>
+        <div class="control-group">
+            <label><span>拖尾水痕 Trail</span> <span id="val-trail">1.0</span></label>
+            <input type="range" id="trailAmount" min="0.0" max="3.0" step="0.1" value="1.0">
+        </div>
+        <div class="control-group">
+            <label><span>玻璃雾气 Fog & Blur</span> <span id="val-blur">0.5</span></label>
+            <input type="range" id="blur" min="0.0" max="1.0" step="0.05" value="0.5">
+        </div>
+        <div class="control-group">
+            <label><span>水滴折射 Refraction</span> <span id="val-refract">0.5</span></label>
+            <input type="range" id="refraction" min="0.0" max="1.0" step="0.05" value="0.5">
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="control-group">
+            <label><span>手指擦除宽度 Wipe Radius</span> <span id="val-wipeW">18 px</span></label>
+            <input type="range" id="wipeWidth" min="4" max="50" step="1" value="18">
+        </div>
+        <div class="control-group">
+            <label><span>痕迹停留时间 Time (s)</span> <span id="val-wipeT">6.0 s</span></label>
+            <input type="range" id="wipeDuration" min="0.5" max="30.0" step="0.5" value="6.0">
+        </div>
+
+        <label class="upload-btn">
+            上传氛围背景 (图片 / 视频)
+            <input type="file" id="media-upload" accept="image/*,video/*">
+        </label>
+    </div>
+
+<script>
+// --- Audio System Logic ---
+const bgMusic = new Audio('./rain.mp3');
+bgMusic.loop = true;
+let isMusicOn = true;
+let audioInteracted = false; 
+
+window.addEventListener('pointerdown', () => {
+    if (!audioInteracted && isMusicOn) {
+        bgMusic.play().catch(() => {});
+        audioInteracted = true;
+    }
+}, { once: true });
+
+// --- Quick Tools Logic ---
+let isTextVisible = true;
+const svgVolOn = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>`;
+const svgVolOff = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>`;
+const svgTextOn = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"></path><path d="M9 20h6"></path><path d="M12 4v16"></path></svg>`;
+const svgTextOff = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"></path><path d="M9 20h6"></path><path d="M12 4v16"></path><line x1="2" y1="2" x2="22" y2="22"></line></svg>`;
+
+function toggleMusic() {
+    isMusicOn = !isMusicOn;
+    const btn = document.getElementById('btn-music');
+    btn.innerHTML = isMusicOn ? svgVolOn : svgVolOff;
+    btn.classList.toggle('off', !isMusicOn);
+    
+    if (isMusicOn) { bgMusic.play().catch(() => {}); audioInteracted = true; } 
+    else { bgMusic.pause(); }
+    if (currentVideo) currentVideo.muted = !isMusicOn;
+}
+
+function toggleTextWindow() {
+    isTextVisible = !isTextVisible;
+    const btn = document.getElementById('btn-text');
+    const tw = document.getElementById('text-window');
+    btn.innerHTML = isTextVisible ? svgTextOn : svgTextOff;
+    btn.classList.toggle('off', !isTextVisible);
+    isTextVisible ? tw.classList.remove('hidden') : tw.classList.add('hidden');
+}
+
+const alignBtns = document.querySelectorAll('.align-btn');
+alignBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+        alignBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('overlay-text').style.textAlign = btn.dataset.align;
+    });
+});
+
+// --- UI & Interaction Logic ---
+const panel = document.getElementById('control-panel');
+const settingsBtn = document.getElementById('btn-settings');
+function toggleUI() { 
+    panel.classList.toggle('active'); 
+    settingsBtn.classList.toggle('active');
+}
+
+const elOverlayText = document.getElementById('overlay-text');
+const elTitleInput = document.getElementById('title-input');
+const docRoot = document.documentElement;
+
+document.getElementById('textColor').addEventListener('input', (e) => docRoot.style.setProperty('--text-color', e.target.value));
+
+document.querySelectorAll('input[type=range]').forEach(input => {
+    input.addEventListener('input', (e) => {
+        const id = e.target.id; const val = e.target.value;
+        const valDisplay = document.getElementById(`val-${id}`);
+        if(valDisplay) valDisplay.innerText = val + (id === 'textSize' || id === 'wipeWidth' ? ' px' : (id === 'wipeDuration' ? ' s' : ''));
+        
+        if(id === 'textSize') elOverlayText.style.fontSize = val + 'px';
+        if(id === 'fontWeight') { elOverlayText.style.fontWeight = val; elTitleInput.style.fontWeight = val; }
+    });
+});
+
+// --- Draggable Text Window ---
+const textWindow = document.getElementById('text-window');
+const dragHandle = document.getElementById('text-drag-handle');
+let isWindowDragging = false, winOffsetX = 0, winOffsetY = 0;
+
+[textWindow, elTitleInput].forEach(el => {
+    el.addEventListener('pointerdown', e => e.stopPropagation());
+    el.addEventListener('pointermove', e => e.stopPropagation());
+});
+
+dragHandle.addEventListener('pointerdown', (e) => {
+    isWindowDragging = true;
+    const rect = textWindow.getBoundingClientRect();
+    winOffsetX = e.clientX - rect.left; winOffsetY = e.clientY - rect.top;
+    dragHandle.setPointerCapture(e.pointerId); e.stopPropagation();
+});
+dragHandle.addEventListener('pointermove', (e) => {
+    if (!isWindowDragging) return;
+    textWindow.style.left = (e.clientX - winOffsetX) + 'px';
+    textWindow.style.top = (e.clientY - winOffsetY) + 'px'; e.stopPropagation();
+});
+dragHandle.addEventListener('pointerup', (e) => {
+    isWindowDragging = false; dragHandle.releasePointerCapture(e.pointerId);
+});
+
+// --- WebGL Context & Shaders ---
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, preserveDrawingBuffer: false });
+if (!gl) { alert("您的浏览器不支持 WebGL2，请使用最新版的现代浏览器。"); }
+
+const vertexShaderSource = `#version 300 es
+in vec2 a_position; out vec2 vUv;
+void main() { vUv = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }`;
+
+const fragmentShaderSource = `#version 300 es
+precision highp float;
+out vec4 fragColor;
+uniform float u_time; uniform vec2 u_resolution; uniform sampler2D u_tex0; uniform sampler2D u_wipeTex;  
+uniform int u_hasTex; uniform vec2 u_texResolution; uniform float u_rainAmount; uniform float u_trailAmount;
+uniform float u_blur; uniform float u_refraction;
+
+vec3 N13(float p) {
+    vec3 p3 = fract(vec3(p) * vec3(.1031,.11369,.13787)); p3 += dot(p3, p3.yzx + 19.19);
+    return fract(vec3((p3.x + p3.y)*p3.z, (p3.x+p3.z)*p3.y, (p3.y+p3.z)*p3.x));
+}
+float N(float t) { return fract(sin(t*12345.564)*7658.76); }
+
+vec2 DropLayer2(vec2 uv, float t) {
+    vec2 UV = uv; uv.y += t * 0.75; vec2 a = vec2(6., 1.); vec2 grid = a * 2.; vec2 id = floor(uv * grid);
+    float colShift = N(id.x); uv.y += colShift; id = floor(uv * grid); vec3 n = N13(id.x * 35.2 + id.y * 2376.1);
+    vec2 st = fract(uv * grid) - vec2(.5, 0); float x = n.x - .5; float y = UV.y * 20.; float wiggle = sin(y + sin(y));
+    x += wiggle * (.5 - abs(x)) * (n.z - .5); x *= .7; float ti = fract(t + n.z); y = (sin(ti * ti * (1.2 - ti) * 3.14159265)) * 1.25 - .25;
+    vec2 p = vec2(x, y); float d = length((st - p) * a.yx); float mainDrop = smoothstep(.4, .0, d);
+    float r = sqrt(smoothstep(1., y, st.y)); float cd = abs(st.x - x); float trail = smoothstep(.23 * r, .15 * r * r, cd);
+    float trailFront = smoothstep(-.02, .02, st.y - y); trail *= trailFront * r * r; y = UV.y;
+    float trail2 = smoothstep(.2 * r, .0, cd); float droplets = max(0., (sin(y * (1. - y) * 120.) - st.y)) * trail2 * trailFront * n.z;
+    y = fract(y * 10.) + (st.y - .5); float dd = length(st - vec2(x, y)); droplets = smoothstep(.3, .0, dd);
+    float m = mainDrop + droplets * r * trailFront; return vec2(m, trail);
+}
+
+float StaticDrops(vec2 uv, float t) {
+    uv *= 40.; vec2 id = floor(uv); uv = fract(uv) - .5; vec3 n = N13(id.x * 107.45 + id.y * 3543.654);
+    vec2 p = (n.xy - .5) * .7; float d = length(uv - p); float fade = max(0., 1. - fract(t + n.z) * 2.);
+    return smoothstep(.3, .0, d) * fract(n.z * 10.) * fade;
+}
+
+vec2 Drops(vec2 uv, float t, float l0, float l1, float l2) {
+    float s1 = StaticDrops(uv, t) * l0; vec2 m1 = DropLayer2(uv, t) * l1; vec2 m2 = DropLayer2(uv * 1.85, t) * l2;
+    float c = smoothstep(.3, 1., s1 + m1.x + m2.x); return vec2(c, max(m1.y * l0, m2.y * l1));
+}
+
+float getMask(vec2 wUV, vec2 screenUV) {
+    float texelSize = 1.0 / u_resolution.y; float bloomStrength = 0.8 * 0.02; float raw = 0.0;
+    raw += texture(u_wipeTex, wUV + vec2(-2.0 * texelSize * bloomStrength, 0.0)).a * 0.1;
+    raw += texture(u_wipeTex, wUV + vec2(-1.0 * texelSize * bloomStrength, 0.0)).a * 0.2;
+    raw += texture(u_wipeTex, wUV).a * 0.4;
+    raw += texture(u_wipeTex, wUV + vec2(1.0 * texelSize * bloomStrength, 0.0)).a * 0.2;
+    raw += texture(u_wipeTex, wUV + vec2(2.0 * texelSize * bloomStrength, 0.0)).a * 0.1;
+    raw += texture(u_wipeTex, wUV + vec2(0.0, -2.0 * texelSize * bloomStrength)).a * 0.1;
+    raw += texture(u_wipeTex, wUV + vec2(0.0, -1.0 * texelSize * bloomStrength)).a * 0.2;
+    raw += texture(u_wipeTex, wUV + vec2(0.0, 1.0 * texelSize * bloomStrength)).a * 0.2;
+    raw += texture(u_wipeTex, wUV + vec2(0.0, 2.0 * texelSize * bloomStrength)).a * 0.1;
+    float t = u_time * 0.5; float n = sin(screenUV.x * 60.0 + t) * cos(screenUV.y * 60.0 - t);
+    n += sin(screenUV.x * 120.0 - screenUV.y * 110.0) * 0.5;
+    return raw + n * 0.12 * smoothstep(0.0, 0.4, raw);
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+    vec2 UV = gl_FragCoord.xy / u_resolution.xy; vec2 wipeUV = vec2(UV.x, 1.0 - UV.y);
+    float m_c = getMask(wipeUV, uv); float wipeCore = smoothstep(0.02, 0.6, m_c);
+    
+    float T = u_time * u_rainAmount * 0.5; vec2 e_n = vec2(0.001, 0.0);
+    vec2 d_r = Drops(uv + e_n, T, 1., 1., 1.); vec2 d_l = Drops(uv - e_n, T, 1., 1., 1.);
+    vec2 d_u = Drops(uv + e_n.yx, T, 1., 1., 1.); vec2 d_d = Drops(uv - e_n.yx, T, 1., 1., 1.);
+    float cx = (d_r.x - d_l.x) + (d_r.y - d_l.y) * u_trailAmount * 0.3;
+    float cy = (d_u.x - d_d.x) + (d_u.y - d_d.y) * u_trailAmount * 0.3; vec2 n = vec2(cx, cy);
+    vec2 dropInfo = Drops(uv, T, 1., 1., 1.); float drop = dropInfo.x; float trail = dropInfo.y * u_trailAmount;
+
+    drop *= (1.0 - wipeCore); trail *= (1.0 - wipeCore); n *= (1.0 - wipeCore);
+    float waterMask = clamp(drop + trail, 0.0, 1.0); float blurAmt = u_blur * 0.08 * (1.0 - waterMask) * (1.0 - wipeCore);
+    vec2 offset = n * u_refraction * 0.5;
+    
+    vec2 texScale = vec2(1.0); float canvasAspect = u_resolution.x / u_resolution.y; float texAspect = u_texResolution.x / u_texResolution.y;
+    if(canvasAspect > texAspect) { texScale.y = texAspect / canvasAspect; } else { texScale.x = canvasAspect / texAspect; }
+    
+    vec2 finalUv = UV + offset; vec2 coverUv = (finalUv - 0.5) * texScale + 0.5; 
+    
+    vec3 col = vec3(0.0);
+
+    if (u_hasTex == 1) {
+        if (blurAmt > 0.0) {
+            float a = N13(uv.x * 123.4).x * 6.2831;
+            for (float i = 0.0; i < 16.0; i++) {
+                vec2 offs = vec2(cos(a), sin(a)) * blurAmt * (i / 16.0); 
+                col += texture(u_tex0, coverUv + offs).rgb; a += 1.618;
+            }
+            col /= 16.0;
+        } else { col = texture(u_tex0, coverUv).rgb; }
+    } else {
+        vec2 p = finalUv * 2.0 - 1.0; float fTime = u_time * 0.3; float f = sin(p.x * 2.0 + fTime) * cos(p.y * 1.5 + fTime * 0.7);
+        f += sin(p.x * -1.5 + fTime * 1.2) * cos(p.y * 2.5 - fTime * 0.8);
+        vec3 col1 = vec3(0.04, 0.06, 0.12); vec3 col2 = vec3(0.1, 0.5, 0.7); vec3 col3 = vec3(0.6, 0.2, 0.4);
+        float mix1 = smoothstep(-2.0, 2.0, f + p.x); float mix2 = smoothstep(-2.0, 2.0, f - p.y); col = mix(mix(col1, col2, mix1), col3, mix2);
+    }
+    col += vec3(drop * max(0.0, -n.y) * 1.5); col += vec3(trail * max(0.0, -n.y) * 0.2);  
+    fragColor = vec4(col, 1.0);
+}`;
+
+function compileShader(gl, type, source) {
+    const shader = gl.createShader(type); gl.shaderSource(shader, source); gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) { console.error(gl.getShaderInfoLog(shader)); gl.deleteShader(shader); return null; }
+    return shader;
+}
+
+const program = gl.createProgram();
+gl.attachShader(program, compileShader(gl, gl.VERTEX_SHADER, vertexShaderSource));
+gl.attachShader(program, compileShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource));
+gl.linkProgram(program);
+
+const positionBuffer = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([ -1, -1,  1, -1, -1,  1,  -1,  1,  1, -1,  1,  1 ]), gl.STATIC_DRAW);
+const positionLocation = gl.getAttribLocation(program, 'a_position');
+gl.enableVertexAttribArray(positionLocation); gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+const uniLocs = {
+    time: gl.getUniformLocation(program, 'u_time'),
+    res: gl.getUniformLocation(program, 'u_resolution'),
+    hasTex: gl.getUniformLocation(program, 'u_hasTex'),
+    texRes: gl.getUniformLocation(program, 'u_texResolution'),
+    rain: gl.getUniformLocation(program, 'u_rainAmount'),
+    trail: gl.getUniformLocation(program, 'u_trailAmount'),
+    blur: gl.getUniformLocation(program, 'u_blur'),
+    refract: gl.getUniformLocation(program, 'u_refraction'),
+    tex0: gl.getUniformLocation(program, 'u_tex0'),
+    wipeTex: gl.getUniformLocation(program, 'u_wipeTex')
+};
+
+const bgTexture = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, bgTexture);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+const wipeTexture = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, wipeTexture);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+const maskCanvas = document.createElement('canvas'); const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: false });
+let isDrawing = false, lastX = null, lastY = null, fadeProgress = 0.0, isWiping = false;
+
+function resize() {
+    canvas.width = window.innerWidth * window.devicePixelRatio; canvas.height = window.innerHeight * window.devicePixelRatio;
+    maskCanvas.width = canvas.width; maskCanvas.height = canvas.height; gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener('resize', resize); resize();
+
+function drawWipe(e) {
+    const x = e.offsetX * window.devicePixelRatio; const y = e.offsetY * window.devicePixelRatio;
+    const uiWidth = parseFloat(document.getElementById('wipeWidth').value); 
+    const brushWidth = uiWidth * window.devicePixelRatio * 2;
+    
+    maskCtx.lineCap = 'round'; maskCtx.lineJoin = 'round'; maskCtx.lineWidth = brushWidth * 0.4; 
+    maskCtx.shadowBlur = (brushWidth * 0.2) + brushWidth * 1.0; 
+    maskCtx.shadowColor = `rgba(255, 255, 255, 0.7)`; maskCtx.strokeStyle = `rgba(255, 255, 255, 0.9)`; 
+
+    maskCtx.beginPath();
+    if (lastX !== null) { maskCtx.moveTo(lastX, lastY); maskCtx.lineTo(x, y); } 
+    else { maskCtx.moveTo(x, y); maskCtx.lineTo(x + 1, y + 1); }
+    maskCtx.stroke(); lastX = x; lastY = y; isWiping = true; fadeProgress = 0.0;
+}
+
+canvas.addEventListener('pointerdown', (e) => { isDrawing = true; lastX = null; lastY = null; drawWipe(e); });
+canvas.addEventListener('pointermove', (e) => { if (!isDrawing) return; drawWipe(e); });
+const stopWiping = () => { isDrawing = false; lastX = null; lastY = null; setTimeout(() => { isWiping = false; }, 300); };
+window.addEventListener('pointerup', stopWiping); canvas.addEventListener('pointerout', stopWiping);
+
+let currentVideo = null, hasMedia = 0, mediaWidth = 1.0, mediaHeight = 1.0;
+
+const initImg = new Image(); initImg.src = './bg.jpg';
+initImg.onload = () => {
+    gl.bindTexture(gl.TEXTURE_2D, bgTexture); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, initImg); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    mediaWidth = initImg.width; mediaHeight = initImg.height; hasMedia = 1;
+};
+
+document.getElementById('media-upload').addEventListener('change', (e) => {
+    const file = e.target.files[0]; if (!file) return; const url = URL.createObjectURL(file);
+    if (file.type.startsWith('video/')) {
+        if (currentVideo) { currentVideo.pause(); currentVideo.src = ''; }
+        const video = document.createElement('video'); video.src = url; 
+        video.loop = true; video.muted = !isMusicOn; video.playsInline = true; video.play();
+        video.onloadeddata = () => { currentVideo = video; mediaWidth = video.videoWidth; mediaHeight = video.videoHeight; hasMedia = 1; };
+    } else if (file.type.startsWith('image/')) {
+        const img = new Image(); img.src = url;
+        img.onload = () => {
+            if (currentVideo) { currentVideo.pause(); currentVideo = null; }
+            gl.bindTexture(gl.TEXTURE_2D, bgTexture); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+            mediaWidth = img.width; mediaHeight = img.height; hasMedia = 1;
+        };
+    } 
+});
+
+let lastFrameTime = performance.now();
+
+function smoothstepJS(edge0, edge1, x) { const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0))); return t * t * (3 - 2 * t); }
+
+function render(now) {
+    const dt = now - lastFrameTime; lastFrameTime = now;
+    const durationSec = parseFloat(document.getElementById('wipeDuration').value);
+    if (!isWiping && fadeProgress < 1.0) { fadeProgress = Math.min(fadeProgress + dt / (durationSec * 1000), 1.0); }
+
+    maskCtx.save();
+    maskCtx.globalCompositeOperation = 'destination-out'; maskCtx.fillStyle = `rgba(0, 0, 0, ${smoothstepJS(0.0, 1.0, fadeProgress) * 0.018})`;
+    maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height); maskCtx.restore();
+
+    gl.useProgram(program);
+    
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bgTexture);
+    if (currentVideo && currentVideo.readyState >= 2) {
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, currentVideo); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    }
+    gl.uniform1i(uniLocs.tex0, 0);
+
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, wipeTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, maskCanvas);
+    gl.uniform1i(uniLocs.wipeTex, 1);
+    
+    gl.uniform1f(uniLocs.time, now * 0.001); gl.uniform2f(uniLocs.res, canvas.width, canvas.height); 
+    gl.uniform1i(uniLocs.hasTex, hasMedia); gl.uniform2f(uniLocs.texRes, mediaWidth, mediaHeight);
+    
+    gl.uniform1f(uniLocs.rain, parseFloat(document.getElementById('rainAmount').value)); 
+    gl.uniform1f(uniLocs.trail, parseFloat(document.getElementById('trailAmount').value));
+    gl.uniform1f(uniLocs.blur, parseFloat(document.getElementById('blur').value)); 
+    gl.uniform1f(uniLocs.refract, parseFloat(document.getElementById('refraction').value));
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6); 
+    requestAnimationFrame(render);
+}
+
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
