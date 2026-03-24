@@ -540,7 +540,7 @@ window.addEventListener('pointerup', stopWiping); canvas.addEventListener('point
 
 let currentVideo = null, hasMedia = 0, mediaWidth = 1.0, mediaHeight = 1.0;
 
-const initImg = new Image(); initImg.src = './bg.mp4';
+const initImg = new Image(); initImg.src = './bg.jpg';
 initImg.onload = () => {
     gl.bindTexture(gl.TEXTURE_2D, bgTexture); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, initImg); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
