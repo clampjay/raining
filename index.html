@@ -53,35 +53,24 @@
             backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
         }
 
-        /* 完全隐藏原生缩放方块，但保留拖拽调整大小的功能 */
         #text-window::-webkit-resizer { background: transparent; }
+        #text-window:hover::-webkit-resizer { background: rgba(255, 255, 255, 0.2); }
 
-        /* 标题栏常亮 */
         .title-bar {
             width: 100%; height: 36px; display: flex; align-items: center; justify-content: center;
             position: relative; cursor: grab; background: transparent; 
-            user-select: none; opacity: 1; transition: opacity 0.4s ease;
+            user-select: none; opacity: 0; transition: opacity 0.4s ease;
         }
-        
+        #text-window:focus-within .title-bar, #text-window:hover .title-bar { opacity: 1; }
         .title-bar:active { cursor: grabbing; }
-        
-        /* 拖拽句柄平时隐藏，hover时显露 */
-        .title-bar .drag-icon { 
-            position: absolute; left: 16px; font-size: 16px; pointer-events: none; 
-            color: rgba(255,255,255,0); transition: color 0.4s ease;
-        }
-        #text-window:focus-within .title-bar .drag-icon, #text-window:hover .title-bar .drag-icon {
-            color: rgba(255,255,255,0.4);
-        }
+        .title-bar .drag-icon { position: absolute; left: 16px; font-size: 16px; pointer-events: none; color: rgba(255,255,255,0.4); }
 
-        /* 标题文字常驻，移开时变淡，融合环境 */
         .title-text {
-            background: transparent; border: none; color: var(--text-color); opacity: 0.4;
+            background: transparent; border: none; color: var(--text-color); opacity: 0.8;
             font-size: 12px; font-weight: 500; letter-spacing: 2px; text-align: center;
-            outline: none; width: 60%; font-family: inherit; transition: color 0.2s, opacity 0.4s ease;
+            outline: none; width: 60%; font-family: inherit; transition: color 0.2s, opacity 0.2s;
         }
-        #text-window:focus-within .title-text, #text-window:hover .title-text { opacity: 0.8; }
-        .title-text:focus { opacity: 1 !important; border-bottom: 1px solid rgba(255, 255, 255, 0.2); }
+        .title-text:focus { opacity: 1; border-bottom: 1px solid rgba(255, 255, 255, 0.2); }
         .title-text::placeholder { color: rgba(255, 255, 255, 0.3); }
 
         #overlay-text {
@@ -276,8 +265,12 @@ let isMusicOn = true;
 let audioInteracted = false; 
 
 window.addEventListener('pointerdown', () => {
-    if (!audioInteracted && isMusicOn) {
-        bgMusic.play().catch(() => {});
+    if (!audioInteracted) {
+        if (isMusicOn) {
+            bgMusic.play().catch(() => {});
+            if(currentVideo) currentVideo.muted = false; // 用户首次交互后，允许视频发出声音
+        }
+        if(currentVideo && currentVideo.paused) currentVideo.play().catch(() => {});
         audioInteracted = true;
     }
 }, { once: true });
@@ -346,9 +339,7 @@ document.querySelectorAll('input[type=range]').forEach(input => {
 // --- Draggable Text Window ---
 const textWindow = document.getElementById('text-window');
 const dragHandle = document.getElementById('text-drag-handle');
-let isWindowDragging = false, winOffsetX = 0, winOffsetY = 0;
-
-[textWindow, elTitleInput].forEach(el => {
+let isWindowDragging = false, winOffsetX = 0, winOffsetY = 0;[textWindow, elTitleInput].forEach(el => {
     el.addEventListener('pointerdown', e => e.stopPropagation());
     el.addEventListener('pointermove', e => e.stopPropagation());
 });
@@ -540,11 +531,21 @@ window.addEventListener('pointerup', stopWiping); canvas.addEventListener('point
 
 let currentVideo = null, hasMedia = 0, mediaWidth = 1.0, mediaHeight = 1.0;
 
-const initImg = new Image(); initImg.src = './bg.jpg';
-initImg.onload = () => {
-    gl.bindTexture(gl.TEXTURE_2D, bgTexture); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, initImg); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-    mediaWidth = initImg.width; mediaHeight = initImg.height; hasMedia = 1;
+// ==========================================
+// 核心修改：将初始加载替换为读取视频 bg.mp4
+// ==========================================
+const initVideo = document.createElement('video');
+initVideo.src = './bg.mp4';
+initVideo.loop = true;
+initVideo.muted = true; // 强制静音以保证无论浏览器环境如何都能自动播放画面
+initVideo.playsInline = true;
+initVideo.play().catch(e => { console.log("视频自动播放被浏览器阻止，等待用户交互", e); });
+
+initVideo.onloadeddata = () => {
+    currentVideo = initVideo; 
+    mediaWidth = initVideo.videoWidth; 
+    mediaHeight = initVideo.videoHeight; 
+    hasMedia = 1;
 };
 
 document.getElementById('media-upload').addEventListener('change', (e) => {
@@ -593,6 +594,7 @@ function render(now) {
     gl.uniform1f(uniLocs.time, now * 0.001); gl.uniform2f(uniLocs.res, canvas.width, canvas.height); 
     gl.uniform1i(uniLocs.hasTex, hasMedia); gl.uniform2f(uniLocs.texRes, mediaWidth, mediaHeight);
     
+    // UI 控制取值
     gl.uniform1f(uniLocs.rain, parseFloat(document.getElementById('rainAmount').value)); 
     gl.uniform1f(uniLocs.trail, parseFloat(document.getElementById('trailAmount').value));
     gl.uniform1f(uniLocs.blur, parseFloat(document.getElementById('blur').value)); 
